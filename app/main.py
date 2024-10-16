@@ -1,16 +1,23 @@
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
-from models.models import User
+from pydantic import BaseModel
+from typing import Optional, List
 
 app = FastAPI()
 
-@app.get("/")
-def read_root():
-    return {"message": "Hello, World!"}
+class Item(BaseModel):
+    name: str
+    description: Optional[str] = None
+    price: float
+    tax: Optional[float] = None
+    tags: List[str] = []
 
-@app.post("/user")
-def create_user(user: User):
-    is_adult = user.age >= 18
-    user_data = user.dict()
-    user_data["is_adult"] = is_adult
-    return JSONResponse(content=user_data)
+@app.post("/items/")
+async def create_item(item: Item) -> Item:
+    return item
+
+@app.get("/items/")
+async def read_items() -> List[Item]:
+    return [
+        Item(name="Portal Gun", price=42.0),
+        Item(name="Plumbus", price=32.0),
+    ]
