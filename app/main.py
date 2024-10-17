@@ -1,23 +1,15 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
-from typing import Optional, List
+from typing import Annotated # про это будет чуть позднее в курсе
+
+from fastapi import FastAPI, File, UploadFile
 
 app = FastAPI()
 
-class Item(BaseModel):
-    name: str
-    description: Optional[str] = None
-    price: float
-    tax: Optional[float] = None
-    tags: List[str] = []
 
-@app.post("/items/")
-async def create_item(item: Item) -> Item:
-    return item
+@app.post("/files/")
+async def create_file(file: Annotated[bytes, File()]):
+    return {"file_size": len(file)}
 
-@app.get("/items/")
-async def read_items() -> List[Item]:
-    return [
-        Item(name="Portal Gun", price=42.0),
-        Item(name="Plumbus", price=32.0),
-    ]
+
+@app.post("/uploadfile/")
+async def create_upload_file(file: UploadFile):
+    return {"filename": file.filename}
