@@ -1,19 +1,32 @@
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from typing import Optional
+from starlette.responses import Response
 
 app = FastAPI()
 
-@app.get("/headers")
-def get_headers(request: Request):
-    # Извлечение заголовков
-    user_agent = request.headers.get("user-agent")
-    accept_language = request.headers.get("accept-language")
+# Initialize the dependency for base auntification
+security = HTTPBasic()
 
-    # Проверка на наличие заголовков
-    if not user_agent or not accept_language:
-        raise HTTPException(status_code=400, detail="Missing required headers: 'User-Agent' or 'Accept-Language'")
-    
-    # Возврат значений заголовков в ответе
-    return {
-        "User-Agent": user_agent,
-        "Accept-Language": accept_language
-    }
+# Credentials database
+VALID_USERNAME = "admin"
+VALID_PASSWORD = "password"
+
+# Function to check credentials
+def verify_credentials(credentials: HTTPBasicCredentials = Depends(security)):
+    correct_username = credentials.username == VALID_USERNAME
+    correct_password = credentials.password == VALID_PASSWORD
+
+    if not (correct_username and correct_password):
+        # If the data is incorrect, you get error 401 and add title WWW-Authenticate
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    return credentials
+
+@app.get("/secret")
+def get_secret_message(credentials: HTTPBasicCredentials = Depends(verify_credentials)):
+    # If the data is correct, return a secret message
+    return {"message": "You got my secret, welcome"}
