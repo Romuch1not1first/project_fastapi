@@ -1,83 +1,63 @@
 from fastapi import FastAPI, HTTPException
+from databases import Database
 from pydantic import BaseModel
-from sqlalchemy import Column, Integer, String, Boolean, create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from typing import Optional
 
-# Database setup and connection
-SQLALCHEMY_DATABASE_URL = "sqlite:///./todos.db"
-engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
-
-# Database model for the Todo resource
-class TodoModel(Base):
-    __tablename__ = "todos"
-    id = Column(Integer, primary_key=True, index=True)
-    title = Column(String, index=True)
-    description = Column(String, index=True)
-    completed = Column(Boolean, default=False)
-
-# Create the database table
-Base.metadata.create_all(bind=engine)
-
-# Pydantic models for request validation
-class TodoCreate(BaseModel):
-    title: str
-    description: str
-
-class TodoUpdate(BaseModel):
-    title: str
-    description: str
-    completed: bool
-
-# Initialize FastAPI app
 app = FastAPI()
 
-# Dependency for creating a database session
-def get_db():
-    db = SessionLocal()
+# PostgreSQL database URL (replace 'user', 'password', 'localhost', and 'dbname' with your actual PostgreSQL credentials)
+DATABASE_URL = "postgresql://user:password@localhost/dbname"
+
+# Create an instance of the Database object. This will handle the connection and interaction with the PostgreSQL database.
+# The Database class from the 'databases' library allows asynchronous queries, which is helpful for high-performance applications.
+database = Database(DATABASE_URL)
+
+# Pydantic model for incoming user data validation
+# This model will validate the data received from the client in the request body (e.g., for creating a new user).
+class UserCreate(BaseModel):
+    username: str  # This field will accept the username as a string
+    email: str     # This field will accept the email as a string
+
+# Pydantic model for returning user data to the client
+# This is used to format the response after a user is successfully created.
+class UserReturn(BaseModel):
+    username: str  # This field will return the username
+    email: str     # This field will return the email
+    id: Optional[int] = None  # Optional field to return the user's ID from the database after creation
+
+# Event handler that will run when the application starts
+# It ensures the connection to the database is established before processing any requests.
+@app.on_event("startup")
+async def startup_database():
+    await database.connect()  # Connect to the PostgreSQL database when the FastAPI application starts
+
+# Event handler that will run when the application is shutting down
+# This ensures that the connection to the database is properly closed to avoid any resource leakage.
+@app.on_event("shutdown")
+async def shutdown_database():
+    await database.disconnect()  # Disconnect from the PostgreSQL database when the FastAPI application stops
+
+# Create a route to handle POST requests for creating new users
+# The response_model argument specifies that the output should conform to the UserReturn schema.
+@app.post("/users/", response_model=UserReturn)
+async def create_user(user: UserCreate):
+    # SQL query to insert a new user into the 'users' table
+    # The values ':username' and ':email' are placeholders that will be replaced with actual data from the request
+    query = "INSERT INTO users (username, email) VALUES (:username, :email) RETURNING id"
+    
+    # A dictionary containing the actual values that will replace the placeholders in the query
+    values = {"username": user.username, "email": user.email}
+    
     try:
-        yield db
-    finally:
-        db.close()
-
-# Endpoint to create a new Todo
-@app.post("/todos", response_model=TodoCreate)
-def create_todo(todo: TodoCreate, db: SessionLocal = next(get_db())):
-    db_todo = TodoModel(title=todo.title, description=todo.description)
-    db.add(db_todo)
-    db.commit()
-    db.refresh(db_todo)
-    return db_todo
-
-# Endpoint to get a Todo by ID
-@app.get("/todos/{todo_id}")
-def read_todo(todo_id: int, db: SessionLocal = next(get_db())):
-    todo = db.query(TodoModel).filter(TodoModel.id == todo_id).first()
-    if todo is None:
-        raise HTTPException(status_code=404, detail="Todo not found")
-    return todo
-
-# Endpoint to update an existing Todo
-@app.put("/todos/{todo_id}", response_model=TodoUpdate)
-def update_todo(todo_id: int, todo: TodoUpdate, db: SessionLocal = next(get_db())):
-    db_todo = db.query(TodoModel).filter(TodoModel.id == todo_id).first()
-    if db_todo is None:
-        raise HTTPException(status_code=404, detail="Todo not found")
-    db_todo.title = todo.title
-    db_todo.description = todo.description
-    db_todo.completed = todo.completed
-    db.commit()
-    db.refresh(db_todo)
-    return db_todo
-
-# Endpoint to delete a Todo
-@app.delete("/todos/{todo_id}")
-def delete_todo(todo_id: int, db: SessionLocal = next(get_db())):
-    db_todo = db.query(TodoModel).filter(TodoModel.id == todo_id).first()
-    if db_todo is None:
-        raise HTTPException(status_code=404, detail="Todo not found")
-    db.delete(db_todo)
-    db.commit()
-    return {"message": "Todo deleted successfully"}
+        # Execute the SQL query asynchronously and retrieve the new user's ID
+        # The 'execute' method runs the query and returns the value of the 'RETURNING' clause (in this case, the ID)
+        user_id = await database.execute(query=query, values=values)
+        
+        # Return the newly created user's data, including the ID
+        # user.dict() returns the username and email fields as a dictionary, and we add the 'id' to the response
+        return {**user.dict(), "id": user_id}
+    
+    except Exception as e:
+        # If there is an error during the query execution, raise an HTTPException with a 500 status code
+        # This will notify the client that something went wrong on the server.
+        raise HTTPException(status_code=500, detail="Failed to create user")
