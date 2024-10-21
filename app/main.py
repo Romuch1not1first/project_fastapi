@@ -1,71 +1,83 @@
-from fastapi import FastAPI, HTTPException, Depends
-from fastapi.security import OAuth2PasswordBearer
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-import jwt
-import datetime
+from sqlalchemy import Column, Integer, String, Boolean, create_engine
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
 
-# Configuration
-SECRET_KEY = "your_secret_key"  # Secret key for encoding the JWT token
-ALGORITHM = "HS256"  # Algorithm used for encoding the JWT token
+# Database setup and connection
+SQLALCHEMY_DATABASE_URL = "sqlite:///./todos.db"
+engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
 
-# Create a FastAPI application
+# Database model for the Todo resource
+class TodoModel(Base):
+    __tablename__ = "todos"
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, index=True)
+    description = Column(String, index=True)
+    completed = Column(Boolean, default=False)
+
+# Create the database table
+Base.metadata.create_all(bind=engine)
+
+# Pydantic models for request validation
+class TodoCreate(BaseModel):
+    title: str
+    description: str
+
+class TodoUpdate(BaseModel):
+    title: str
+    description: str
+    completed: bool
+
+# Initialize FastAPI app
 app = FastAPI()
 
-# Create OAuth2PasswordBearer to extract the token from the header
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
-
-# Function to create a JWT token
-def create_jwt_token(data: dict):
-    # Set expiration time for the token (30 minutes from now)
-    expiration = datetime.datetime.utcnow() + datetime.timedelta(minutes=30)
-    data.update({"exp": expiration})  # Add expiration time to the payload
-    return jwt.encode(data, SECRET_KEY, algorithm=ALGORITHM)  # Encode the JWT token
-
-# Stub function for checking user credentials
-def authenticate_user(username: str, password: str) -> bool:
-    # Assume we have a database of users
-    valid_users = [
-        {"username": "john_doe", "password": "adminpass"},  # Valid user example
-        {"username": "securepassword123", "password": "userpass"}  # Another valid user
-    ]
-    
-    # Check for matching username and password
-    for user in valid_users:
-        if user["username"] == username and user["password"] == password:
-            return True  # Credentials are valid
-    return False  # Credentials are invalid
-
-# Function to verify the JWT token
-def verify_jwt_token(token: str = Depends(oauth2_scheme)):
+# Dependency for creating a database session
+def get_db():
+    db = SessionLocal()
     try:
-        # Decode the token to retrieve the payload
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        return payload  # Return the payload if the token is valid
-    except jwt.ExpiredSignatureError:
-        # Handle case when the token has expired
-        raise HTTPException(status_code=401, detail="Token has expired")
-    except jwt.InvalidTokenError:
-        # Handle case when the token is invalid
-        raise HTTPException(status_code=401, detail="Invalid token")
+        yield db
+    finally:
+        db.close()
 
-# Model for incoming user data
-class User(BaseModel):
-    username: str  # Username field
-    password: str  # Password field
+# Endpoint to create a new Todo
+@app.post("/todos", response_model=TodoCreate)
+def create_todo(todo: TodoCreate, db: SessionLocal = next(get_db())):
+    db_todo = TodoModel(title=todo.title, description=todo.description)
+    db.add(db_todo)
+    db.commit()
+    db.refresh(db_todo)
+    return db_todo
 
-@app.post("/login")
-async def login(user_in: User):
-    # Check user credentials using the authenticate_user function
-    if authenticate_user(user_in.username, user_in.password):
-        # If credentials are valid, create and return a JWT token
-        return {
-            "access_token": create_jwt_token({"sub": user_in.username}),  # Create token with username as subject
-            "token_type": "bearer"  # Indicate token type
-        }
-    # If credentials are invalid, raise an HTTP exception with a 401 status
-    raise HTTPException(status_code=401, detail="Invalid credentials")
+# Endpoint to get a Todo by ID
+@app.get("/todos/{todo_id}")
+def read_todo(todo_id: int, db: SessionLocal = next(get_db())):
+    todo = db.query(TodoModel).filter(TodoModel.id == todo_id).first()
+    if todo is None:
+        raise HTTPException(status_code=404, detail="Todo not found")
+    return todo
 
-@app.get("/protected_resource")
-async def protected_resource(token: str = Depends(verify_jwt_token)):
-    # This endpoint is protected; only accessible with a valid token
-    return {"message": "This is a protected resource!", "user": token["sub"]}  # Return a message and the username
+# Endpoint to update an existing Todo
+@app.put("/todos/{todo_id}", response_model=TodoUpdate)
+def update_todo(todo_id: int, todo: TodoUpdate, db: SessionLocal = next(get_db())):
+    db_todo = db.query(TodoModel).filter(TodoModel.id == todo_id).first()
+    if db_todo is None:
+        raise HTTPException(status_code=404, detail="Todo not found")
+    db_todo.title = todo.title
+    db_todo.description = todo.description
+    db_todo.completed = todo.completed
+    db.commit()
+    db.refresh(db_todo)
+    return db_todo
+
+# Endpoint to delete a Todo
+@app.delete("/todos/{todo_id}")
+def delete_todo(todo_id: int, db: SessionLocal = next(get_db())):
+    db_todo = db.query(TodoModel).filter(TodoModel.id == todo_id).first()
+    if db_todo is None:
+        raise HTTPException(status_code=404, detail="Todo not found")
+    db.delete(db_todo)
+    db.commit()
+    return {"message": "Todo deleted successfully"}
