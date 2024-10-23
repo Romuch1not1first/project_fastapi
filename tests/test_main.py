@@ -1,41 +1,48 @@
+# tests/test_main.py
+
 import os
 import sys
 from fastapi.testclient import TestClient
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../app')))
+from main import app 
 
-# Add the parent directory to the system path for module importing
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../')))
-
-from fastapi.testclient import TestClient
-from app.main import app  # Import the FastAPI app
-
-# Create an instance of TestClient for testing the FastAPI application
 client = TestClient(app)
 
-def test_calculate_sum():
-    # Test case 1: valid input data
-    response = client.get("/sum/?a=5&b=10")
+# Tests for the user registration endpoint
+def test_register_user():
+    response = client.post("/register/", json={"username": "testuser", "email": "test@example.com"})
     assert response.status_code == 200
-    assert response.json() == {"result": 15}
+    assert response.json() == {"username": "testuser", "email": "test@example.com"}
 
-    # Test case 2: negative numbers
-    response = client.get("/sum/?a=-8&b=-3")
+    # Attempt to register the same user again
+    response = client.post("/register/", json={"username": "testuser", "email": "test@example.com"})
+    assert response.status_code == 400
+    assert response.json() == {"detail": "User already registered"}
+
+# Tests for the user retrieval endpoint
+def test_get_user():
+    # First, register the user
+    client.post("/register/", json={"username": "testuser2", "email": "test2@example.com"})
+
+    response = client.get("/users/testuser2")
     assert response.status_code == 200
-    assert response.json() == {"result": -11}
+    assert response.json() == {"username": "testuser2", "email": "test2@example.com"}
 
-    # Test case 3: zero and a positive number
-    response = client.get("/sum/?a=0&b=7")
+    # Attempt to retrieve a non-existent user
+    response = client.get("/users/nonexistentuser")
+    assert response.status_code == 404
+    assert response.json() == {"detail": "User not found"}
+
+# Tests for the user deletion endpoint
+def test_delete_user():
+    # First, register the user
+    client.post("/register/", json={"username": "testuser3", "email": "test3@example.com"})
+
+    response = client.delete("/users/testuser3")
     assert response.status_code == 200
-    assert response.json() == {"result": 7}
+    assert response.json() == {"detail": "User deleted"}
 
-    # Test case 4: one number not provided
-    response = client.get("/sum/?a=3")
-    assert response.status_code == 422  # Unprocessable Entity (validation error)
-    assert response.json() == {
-        "detail": [
-            {
-                "loc": ["query", "b"],
-                "msg": "field required",
-                "type": "value_error.missing"
-            }
-        ]
-    }
+    # Attempt to delete a non-existent user
+    response = client.delete("/users/nonexistentuser")
+    assert response.status_code == 404
+    assert response.json() == {"detail": "User not found"}
